@@ -1,13 +1,13 @@
 import bcrypt from "bcrypt";
-import * as userService from "./user.service.js";
+import User from "../models/user.model.js";
 
 export async function login(email, password) {
   try {
-    const userExists = await userService.findUser(email);
-    if (!userExists) {
+    const user = await User.findOne({ email, status: true });
+    if (!user) {
       return false;
     }
-    const isMatch = await bcrypt.compare(password, userExists.password);
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return false;
     }

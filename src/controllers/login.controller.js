@@ -3,6 +3,7 @@ import * as userService from "../services/user.service.js";
 import { handleGenericError } from "../utils/error.util.js";
 import { handleGenericSuccess } from "../utils/success.util.js";
 import { createToken } from "../libs/jwt.js";
+import { COOKIE_DOMAIN } from "../config.js";
 
 export async function loginController(req, res, next) {
   const { email, password } = req.body;
@@ -21,20 +22,24 @@ export async function loginController(req, res, next) {
       );
     }
 
-    // Genera el token
     const token = await createToken({ id: user._id });
 
-    // Configuración de la cookie (1 semana de duración)
-    res.cookie("token", token, {
-      httpOnly: true, // Bloquea acceso desde JS
-      secure: true, // Solo HTTPS
-      sameSite: "None", // Cross-origin
-      domain: "imageshub-api.ddns.net", // Dominio del backend
-      path: "/", // Válida en todas las rutas
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 604,800,000 ms = 1 semana
-    });
+    const isProduction = process.env.NODE_ENV === "production";
 
-    // Datos seguros del usuario
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction && COOKIE_DOMAIN ? "None" : "Lax",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    };
+
+    if (COOKIE_DOMAIN && isProduction) {
+      cookieOptions.domain = COOKIE_DOMAIN;
+    }
+
+    res.cookie("token", token, cookieOptions);
+
     const userData = {
       _id: user._id,
       nameUser: user.nameUser,
@@ -54,9 +59,21 @@ export async function loginController(req, res, next) {
 
 export async function logout(req, res) {
   try {
-    res.cookie("token", "", {
+    const isProduction = process.env.NODE_ENV === "production";
+
+    const cookieOptions = {
       expires: new Date(0),
-    });
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction && COOKIE_DOMAIN ? "None" : "Lax",
+      path: "/",
+    };
+
+    if (COOKIE_DOMAIN && isProduction) {
+      cookieOptions.domain = COOKIE_DOMAIN;
+    }
+
+    res.cookie("token", "", cookieOptions);
     return res.sendStatus(204);
   } catch (error) {
     console.error("Error al cerrar sesión:", error);

@@ -60,14 +60,12 @@ export async function deleteGalleryController(req, res, next) {
     const userId = req.user.id;
     const idGallery = req.params.id;
 
-    const deletedGallery = await deleteGallery(idGallery, userId);
+    await deleteGallery(idGallery, userId);
 
-    handleGenericSuccess(
-      res,
-      204,
-      deletedGallery,
-      "Galeria eliminada correctamente!"
-    );
+    res.status(200).json({
+      status: "success",
+      message: "Galeria eliminada correctamente!"
+    });
   } catch (error) {
     handleGenericError(
       res,

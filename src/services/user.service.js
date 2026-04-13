@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import User from "../models/user.model.js";
 import Gallery from "../models/gallery.model.js";
+import Image from "../models/image.model.js";
 import { generateResetToken } from "../utils/tokenPassword.util.js";
 import { EMAIL } from "../config.js";
 import { resetPasswordTemplate } from "../utils/emailTemplate.util.js";
@@ -40,9 +41,9 @@ export async function createUser(userData) {
       email: userData.email,
       password: hashedPassword,
       profileImage: userData.profileImage,
-      userInfo: userData.userInfo,
-      galleries: [], // Inicialmente vacío
-      images: [], // Inicialmente vacío
+      userInfo: userInfo ? { es: userInfo } : undefined,
+      galleries: [],
+      images: [],
     });
 
     const savedUser = await newUser.save();
@@ -68,60 +69,99 @@ export async function deleteDefaultProfileImage(idUser) {
 
 export async function getRandomUser() {
   try {
-    // Obtener un usuario aleatorio
-    const randomUserArray = await User.aggregate([
+    const randomUser = await User.aggregate([
+      { $match: { status: true } },
       { $sample: { size: 1 } },
-      {
-        $project: {
-          _id: 1,
-          userName: 1,
-          images: 1,
-          galleries: 1,
-          public: 1,
-        },
-      },
     ]);
 
-    if (!randomUserArray || randomUserArray.length === 0) {
+    if (!randomUser || randomUser.length === 0) {
       throw new Error("No se encontró ningún usuario");
     }
 
-    const randomUserId = randomUserArray[0]._id;
+    const userId = randomUser[0]._id;
 
-    const randomUser = await User.findById(randomUserId)
-      .select("nameUser images galleries")
-      .populate({
-        path: "images",
-        select: "path createdAt public",
-        options: { limit: 6 },
-        match: { public: true },
-      });
+    const userWithDetails = await User.findById(userId)
+      .select("nameUser userInfo profileImage")
+      .lean();
 
-    if (!randomUser) {
-      throw new Error(
-        "No se encontraron detalles para el usuario seleccionado"
-      );
+    if (!userWithDetails) {
+      throw new Error("No se encontraron detalles para el usuario seleccionado");
     }
 
-    // Obtener manualmente la primera galería pública del array
-    const publicGallery = await Gallery.findOne({
-      _id: { $in: randomUser.galleries },
+    const publicGalleries = await Gallery.find({
+      user: userId,
       public: true,
     })
-      .select("name createdAt images public")
-      .populate({
-        path: "images",
-        select: "path",
-        match: { public: true },
-      });
+      .select("name description createdAt images")
+      .lean();
 
-    // Ensamblar el objeto final manualmente
-    const userWithPublicGallery = {
-      ...randomUser.toObject(),
-      galleries: publicGallery ? [publicGallery] : [],
+    const allGalleryImageIds = publicGalleries.flatMap(g => g.images);
+
+    const galleryImages = await Image.find({
+      _id: { $in: allGalleryImageIds },
+    }).select("_id path name public createdAt").lean();
+
+    console.log("getRandomUser - galleryImages found:", galleryImages.length);
+    galleryImages.forEach(img => {
+      console.log(`  Image ${img._id}: public=${img.public}, galleries=${img.galleries}`);
+    });
+
+    const galleryImagesMap = new Map(galleryImages.map(img => [img._id.toString(), img]));
+
+    console.log("getRandomUser - publicGalleries:", publicGalleries.length);
+    publicGalleries.forEach(g => {
+      console.log(`  Gallery ${g._id}: ${g.name}, images count: ${g.images.length}`);
+    });
+
+    const galleriesWithPublicImages = publicGalleries.map(gallery => {
+      const publicImages = gallery.images
+        .map(imgId => galleryImagesMap.get(imgId.toString()))
+        .filter(img => img && img.public === true);
+      
+      console.log(`Gallery ${gallery.name}: ${gallery.images.length} total images, ${publicImages.length} public images`);
+      
+      return {
+        _id: gallery._id,
+        name: gallery.name,
+        description: gallery.description,
+        createdAt: gallery.createdAt,
+        images: publicImages.map(img => ({
+          _id: img._id,
+          path: img.path,
+          name: img.name,
+          createdAt: img.createdAt,
+        })),
+      };
+    });
+
+    const imagesInGalleriesSet = new Set(allGalleryImageIds.map(id => id.toString()));
+
+    const standalonePublicImages = await Image.find({
+      user: userId,
+      public: true,
+      galleries: { $size: 0 },
+    }).select("_id path name public createdAt").lean();
+
+    console.log("getRandomUser - standalonePublicImages found:", standalonePublicImages.length);
+    standalonePublicImages.forEach(img => {
+      console.log(`  Image ${img._id}: public=${img.public}, galleries=${img.galleries}`);
+    });
+
+    const result = {
+      ...userWithDetails,
+      images: standalonePublicImages,
+      galleries: galleriesWithPublicImages,
     };
 
-    return userWithPublicGallery;
+    console.log("getRandomUser - final result:");
+    console.log("  user:", result.nameUser);
+    console.log("  standalone images:", result.images.length);
+    console.log("  galleries:", result.galleries.length);
+    result.galleries.forEach(g => {
+      console.log(`    ${g.name}: ${g.images.length} images`);
+    });
+
+    return result;
   } catch (error) {
     throw new Error(`Error al encontrar un usuario: ${error.message}`);
   }
@@ -154,17 +194,27 @@ export async function getUser(nameUser, lang = "es") {
   try {
     let user = await User.findOne({ nameUser, status: true })
       .populate({ path: "images" })
-      .populate({ path: "galleries" });
+      .populate({ 
+        path: "galleries",
+        populate: { path: "images" }
+      });
 
     if (!user) throw new Error("Usuario no encontrado");
 
     if (["es", "en"].includes(lang)) {
       const val = (user.userInfo?.[lang] || "").trim();
       if (!val) {
-        await translateUserInfo(nameUser, lang);
-        user = await User.findOne({ nameUser, status: true })
-          .populate({ path: "images" })
-          .populate({ path: "galleries" });
+        try {
+          await translateUserInfo(nameUser, lang);
+          user = await User.findOne({ nameUser, status: true })
+            .populate({ path: "images" })
+            .populate({ 
+              path: "galleries",
+              populate: { path: "images" }
+            });
+        } catch (err) {
+          console.warn(`No se pudo traducir userInfo para ${nameUser}: ${err.message}`);
+        }
       }
     }
 
@@ -180,25 +230,36 @@ export async function publicGetUser(nameUser, lang = "es") {
   try {
     let user = await User.findOne({ nameUser, status: true })
       .populate({ path: "images", match: { public: true } })
-      .populate({ path: "galleries", match: { public: true } });
+      .populate({ 
+        path: "galleries", 
+        match: { public: true },
+        populate: { path: "images" }
+      });
 
     if (!user) throw new Error("Usuario no encontrado");
 
     if (["es", "en"].includes(lang)) {
       const val = (user.userInfo?.[lang] || "").trim();
       if (!val) {
-        await translateUserInfo(nameUser, lang); // guarda en DB
-        // 🔁 relee para devolver ya actualizado
-        user = await User.findOne({ nameUser, status: true })
-          .populate({ path: "images", match: { public: true } })
-          .populate({ path: "galleries", match: { public: true } });
+        try {
+          await translateUserInfo(nameUser, lang);
+          user = await User.findOne({ nameUser, status: true })
+            .populate({ path: "images", match: { public: true } })
+            .populate({ 
+              path: "galleries", 
+              match: { public: true },
+              populate: { path: "images" }
+            });
+        } catch (err) {
+          console.warn(`No se pudo traducir userInfo para ${nameUser}: ${err.message}`);
+        }
       }
     }
 
     const { password, ...userWithoutPassword } = user.toObject();
     return userWithoutPassword;
   } catch (error) {
-    throw new Error(`Error al obtener el usuario: ${error.message}`);
+    throw new Error(`Error al obtener el usuario público: ${error.message}`);
   }
 }
 
@@ -213,8 +274,10 @@ export async function translateUserInfo(nameUser, targetLanguage) {
 
     const sourceLang = targetLanguage === "en" ? "es" : "en";
     const sourceText = (user.userInfo?.[sourceLang] || "").trim();
-    if (!sourceText)
-      throw new Error(`No hay userInfo.${sourceLang} para traducir`);
+    if (!sourceText) {
+      console.log(`No hay userInfo.${sourceLang} para traducir en ${nameUser}`);
+      return;
+    }
 
     const normalized = normalizeText(sourceText);
     const translated = await translateText(normalized, targetLanguage);
@@ -223,12 +286,13 @@ export async function translateUserInfo(nameUser, targetLanguage) {
       { nameUser, status: true },
       {
         $set: {
-          [`userInfo.${sourceLang}`]: normalized, // guarda normalizado el origen
-          [`userInfo.${targetLanguage}`]: translated, // y la traducción
+          [`userInfo.${sourceLang}`]: normalized,
+          [`userInfo.${targetLanguage}`]: translated,
         },
       }
     );
   } catch (error) {
+    console.error(`Error al traducir userInfo: ${error.message}`);
     throw new Error(`Error al traducir el texto: ${error.message}`);
   }
 }
@@ -237,39 +301,42 @@ export async function updateUser(id, userData, clearImage = false) {
   try {
     const objectId = new mongoose.Types.ObjectId(id);
 
+    console.log("updateUser - clearImage param:", clearImage);
+    console.log("updateUser - userData.clearImage:", userData.clearImage);
+    console.log("updateUser - userData:", userData);
+
     const existingUser = await User.findOne({ _id: objectId, status: true });
     if (!existingUser) throw new Error("Usuario no encontrado");
+    const previousProfileImage = existingUser.profileImage;
+    console.log("updateUser - previousProfileImage:", previousProfileImage);
 
-    // 1) Normaliza clearImage
-    const shouldRemove = toBoolean(clearImage);
+    const shouldRemove = toBoolean(clearImage) || toBoolean(userData.clearImage);
+    console.log("updateUser - shouldRemove:", shouldRemove);
+    const hasNewProfileImage = Boolean(userData.profileImage);
+    console.log("updateUser - hasNewProfileImage:", hasNewProfileImage);
 
-    // 2) Declara el contenedor de la actualización (ANTES de usarlo)
     const updateOps = { $set: {}, $unset: {} };
 
-    // 3) Whitelist de campos editables (evita que te lleguen cosas raras)
     const allowed = ["nameUser", "email", "userInfo"];
     for (const k of allowed) {
       if (userData[k] !== undefined) updateOps.$set[k] = userData[k];
     }
 
-    // 4) Si llegó una NUEVA imagen en userData.profileImage => priorízala
-    if (userData.profileImage) {
-      // si quieres, aquí puedes llamar a deleteUserProfileImage para borrar la anterior
+    if (hasNewProfileImage) {
+      if (previousProfileImage && previousProfileImage !== userData.profileImage) {
+        await removeProfileImageFile(previousProfileImage);
+      }
       updateOps.$set.profileImage = userData.profileImage;
     }
 
-    // 5) Si se debe eliminar imagen y NO vino una nueva en este request => UNSET
-    if (shouldRemove && !userData.profileImage) {
-      // si además quieres borrar el archivo físico:
-      // await deleteUserProfileImage(objectId, true);
-      updateOps.$unset.profileImage = ""; // elimina el campo en la DB
+    if (shouldRemove && !hasNewProfileImage) {
+      await removeProfileImageFile(previousProfileImage);
+      updateOps.$unset.profileImage = "";
     }
 
-    // 6) Limpia operadores vacíos para no enviar objetos vacíos a Mongo
     if (Object.keys(updateOps.$set).length === 0) delete updateOps.$set;
     if (Object.keys(updateOps.$unset).length === 0) delete updateOps.$unset;
 
-    // 7) Ejecuta update
     const updatedUser = await User.findOneAndUpdate(
       { _id: objectId, status: true },
       updateOps,
@@ -281,6 +348,18 @@ export async function updateUser(id, userData, clearImage = false) {
     return updatedUser;
   } catch (error) {
     throw new Error(`Error al modificar el usuario: ${error.message}`);
+  }
+}
+
+async function removeProfileImageFile(relativePath) {
+  if (!relativePath || relativePath === "default" || relativePath.startsWith("http")) {
+    return;
+  }
+
+  const absolutePath = path.join(imagesDir, relativePath);
+  if (fs.existsSync(absolutePath)) {
+    await fs.promises.unlink(absolutePath);
+    console.log(`Imagen de perfil eliminada: ${absolutePath}`);
   }
 }
 
@@ -325,16 +404,7 @@ export async function deleteUserProfileImage(userId, clearImage) {
       return;
     }
 
-    // Construir la ruta absoluta de la imagen
-    const absolutePath = path.join(imagesDir, relativePath);
-
-    // Verificar si el archivo existe antes de eliminarlo
-    if (fs.existsSync(absolutePath)) {
-      await fs.promises.unlink(absolutePath); // Eliminar el archivo físicamente
-      console.log(`Imagen de perfil eliminada: ${absolutePath}`);
-    } else {
-      console.warn(`El archivo no existe: ${absolutePath}`);
-    }
+    await removeProfileImageFile(relativePath);
   } catch (error) {
     throw new Error(`Error al eliminar la imagen de perfil: ${error.message}`);
   }

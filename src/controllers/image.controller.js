@@ -5,20 +5,18 @@ import { handleGenericSuccess } from "../utils/success.util.js";
 export async function createImageController(req, res, next) {
   try {
     const userId = req.user.id;
-    // Asegurarse de que galleryId sea un arreglo, incluso si es único
     const galleryIds = Array.isArray(req.body.galleryId)
       ? req.body.galleryId
       : req.body.galleryId
-      ? [req.body.galleryId] // Si solo es un ID, lo convertimos en un arreglo
+      ? [req.body.galleryId]
       : [];
     const imageData = {
       name: req.body.name,
       public: req.body.public,
-      galleryIds, // Pasamos un arreglo de galleryIds
+      galleryIds,
       path: req.processedImagePath,
     };
 
-    // Crear la imagen
     const newImage = await imageService.createImage(
       req.processedImagePath,
       userId,
@@ -70,14 +68,12 @@ export async function deleteImageController(req, res, next) {
     const imageId = req.params.id;
     const userId = req.user.id;
 
-    const deletedImage = await imageService.deleteImage(imageId, userId);
+    await imageService.deleteImage(imageId, userId);
 
-    handleGenericSuccess(
-      res,
-      204,
-      deletedImage,
-      "Imagen eliminada correctamente!"
-    );
+    res.status(200).json({
+      status: "success",
+      message: "Imagen eliminada correctamente!"
+    });
   } catch (error) {
     handleGenericError(
       res,

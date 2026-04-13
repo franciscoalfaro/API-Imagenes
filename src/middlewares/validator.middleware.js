@@ -3,8 +3,9 @@ import path from "path";
 
 export const validateSchema = (schema) => (req, res, next) => {
   try {
-    // Convierte req.body.public a booleano y lo asigna de nuevo a req.body.public
-    req.body.public = Boolean(req.body.public);
+    if (req.body.public !== undefined) {
+      req.body.public = req.body.public === true || req.body.public === "true";
+    }
 
     schema.parse(req.body);
 

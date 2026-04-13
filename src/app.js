@@ -1,15 +1,16 @@
 import express from "express";
 import morgan from "morgan";
 import cookieParser from "cookie-parser";
-import path from "path";
-import { fileURLToPath } from "url";
 import store from "./routes/store.routes.js";
 import profile from "./routes/profile.routes.js";
 import cron from "node-cron"; // Importa node-cron
 import { deleteUncompressedImages } from "./services/image.service.js"; // Importa la función
 import cors from "cors";
+import { IMAGES_DIR, ensureUploadsDir } from "./config.js";
 
 const app = express();
+
+ensureUploadsDir();
 
 // 1. Middlewares básicos
 app.use(morgan("dev")); // Logs de solicitudes
@@ -25,10 +26,8 @@ app.use(
   })
 );
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 // Configuración CORRECTA para apuntar a /API-Imagenes/src/uploads/
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", express.static(IMAGES_DIR));
 
 // 4. Rutas
 app.use("/api", store);

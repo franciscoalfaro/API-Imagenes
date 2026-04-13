@@ -11,20 +11,21 @@ export async function authMiddleware(req, res, next) {
       return handleGenericError(res, 401, "Acceso no autorizado");
     }
 
-    // Crear una promesa manualmente
     const decoded = await new Promise((resolve, reject) => {
       jwt.verify(token, TOKEN_SECRET, (err, decoded) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(decoded);
-        }
+        if (err) reject(err);
+        else resolve(decoded);
       });
     });
 
     const user = await User.findById(decoded.id);
+
     if (!user) {
-      return handleGenericError(res, 401, "Usuario no encontrado");
+      return handleGenericError(res, 401, "Usuario no encontrado en la base de datos");
+    }
+
+    if (!user.status) {
+      return handleGenericError(res, 401, "Usuario inactivo");
     }
 
     req.user = {

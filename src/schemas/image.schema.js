@@ -13,6 +13,7 @@ export const createImageSchema = z.object({
       message: "El path no puede estar vacío",
     }),
   public: z.boolean().default(true),
+  galleryId: z.string().optional(),
 });
 
 export const updateImageSchema = z.object({
@@ -28,4 +29,5 @@ export const updateImageSchema = z.object({
       }
     ),
   public: z.boolean().default(true),
+  galleryIds: z.array(z.string()).optional(),
 });

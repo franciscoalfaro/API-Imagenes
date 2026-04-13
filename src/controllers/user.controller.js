@@ -128,12 +128,16 @@ export async function updateUserController(req, res, next) {
   const id = req.params.id;
   const userData = req.body;
 
+  console.log("updateUserController - req.body.clearImage:", req.body.clearImage);
+  console.log("updateUserController - req.body:", req.body);
+
   // Asegúrate de agregar processedImagePath si existe
   if (req.processedImagePath) {
     userData.profileImage = req.processedImagePath; // Asignar la ruta procesada de la imagen
   }
 
   const clearImage = toBoolean(req.body.clearImage);
+  console.log("updateUserController - clearImage after toBoolean:", clearImage);
 
   try {
     const updateUser = await userService.updateUser(id, userData, clearImage);
@@ -150,7 +154,7 @@ export async function updateUserController(req, res, next) {
       handleGenericError(
         res,
         400,
-        `Error al actualizar el usuario: ${error.message}`
+        `Error al modificar el usuario: ${error.message}`
       );
     }
     next(error);

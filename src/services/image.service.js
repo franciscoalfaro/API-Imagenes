@@ -86,17 +86,14 @@ export async function updateImage(imageId, userId, imageData) {
       throw new Error("Imagen no encontrada.");
     }
 
-    // Verificar que el usuario sea propietario de la imagen
     if (existingImage.user.toString() !== userId.toString()) {
       throw new Error("No tienes permisos para modificar esta imagen.");
     }
 
-    // Manejar las galerías
-    let galleries = existingImage.galleries; // Mantener las galerías actuales por defecto
+    let galleries = existingImage.galleries;
 
-    if (imageData.galleryIds) {
+    if (imageData.galleryIds !== undefined) {
       if (Array.isArray(imageData.galleryIds) && imageData.galleryIds.length > 0) {
-        // Validar las galerías si se proporcionan nuevos IDs
         const validGalleries = await Gallery.find({
           _id: { $in: imageData.galleryIds },
           user: userId,
@@ -106,27 +103,31 @@ export async function updateImage(imageId, userId, imageData) {
           throw new Error("Algunas galerías no existen o no pertenecen al usuario.");
         }
 
-        galleries = validGalleries.map((gallery) => gallery._id); // Actualizar las galerías válidas
+        galleries = validGalleries.map((gallery) => gallery._id);
       } else {
-        // Si se envía un arreglo vacío, la imagen quedará sin galerías
         galleries = [];
       }
     }
 
-    // Actualizar los campos de la imagen
-    existingImage.name = imageData.name || existingImage.name;
-    existingImage.public = imageData.public !== undefined ? imageData.public : existingImage.public; // Usamos '!== undefined' para asegurarnos de que no sea undefined
+    if (imageData.name !== undefined) {
+      existingImage.name = imageData.name;
+    }
+    
+    if (imageData.public !== undefined) {
+      console.log("updateImage - public value:", imageData.public, typeof imageData.public);
+      existingImage.public = imageData.public === true || imageData.public === "true";
+      console.log("updateImage - saved public value:", existingImage.public);
+    }
+    
     existingImage.galleries = galleries;
 
     const updatedImage = await existingImage.save();
 
-    // Actualizar las galerías (remover de las anteriores y añadir a las nuevas)
     await Gallery.updateMany(
-      { images: imageId }, // Remover de galerías antiguas
+      { images: imageId },
       { $pull: { images: imageId } }
     );
 
-    // Añadir la imagen a las galerías nuevas
     if (galleries.length > 0) {
       await Promise.all(
         galleries.map((galleryId) =>
